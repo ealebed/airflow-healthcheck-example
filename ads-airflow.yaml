@@ -1,0 +1,220 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: airflow-role-admin
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - pods/log
+    verbs:
+      - get
+      - watch
+      - list
+      - create
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: airflow-role-admin
+subjects:
+  - kind: ServiceAccount
+    name: default
+---
+apiVersion: v1
+data:
+  airflow.cfg: |
+    [core]
+    dags_folder = /usr/local/airflow/dags
+    base_log_folder = /usr/local/airflow/logs
+
+    remote_logging = False
+    remote_log_conn_id =
+    remote_base_log_folder =
+    encrypt_s3_logs = False
+
+    # The executor class that airflow should use. Choices include
+    # SequentialExecutor, LocalExecutor, CeleryExecutor, DaskExecutor
+    executor = LocalExecutor
+
+    # sql_alchemy_conn = AIRFLOW__CORE__SQL_ALCHEMY_CONN from manifest
+    sql_alchemy_conn =
+    load_examples = False
+    # fernet_key = AIRFLOW__CORE__FERNET_KEY
+    fernet_key =
+
+    [cli]
+    api_client = airflow.api.client.local_client
+    endpoint_url = http://my-airflow.example.cool
+
+    [api]
+    auth_backend = airflow.api.auth.backend.default
+
+    [webserver]
+    base_url = http://my-airflow.example.cool
+    web_server_host = 0.0.0.0
+    web_server_port = 8080
+
+    # Set to true to turn on authentication:
+    # https://airflow.apache.org/security.html#web-authentication
+    authenticate = True
+    auth_backend = airflow.contrib.auth.backends.password_auth
+    # Use FAB-based webserver with RBAC feature
+    rbac = True
+    expose_config = True
+
+    [scheduler]
+    job_heartbeat_sec = 5
+    scheduler_heartbeat_sec = 5
+    run_duration = -1
+    min_file_process_interval = 5
+    dag_dir_list_interval = 300
+    print_stats_interval = 30
+    scheduler_health_check_threshold = 30
+    child_process_log_directory = /usr/local/airflow/logs/scheduler
+    scheduler_zombie_task_threshold = 300
+    catchup_by_default = True
+    max_tis_per_query = 512
+    max_threads = 2
+    authenticate = False
+    use_job_schedule = True
+
+    [admin]
+    hide_sensitive_variable_fields = True
+  known_hosts: |
+    github.com ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAq2A7hRGmdnm9tUDbO9IDSwBK6TbQa+PXYPCPy6rbTrTtw7PHkccKrpp0yVhp5HdEIcKr6pLlVDBfOLX9QUsyCOV0wzfjIJNlGEYsdlLJizHhbn2mUjvSAHQqZETYP81eFzLQNnPHt4EVVUh7VfDESU84KezmD5QlWpXLmvU31/yMf+Se8xhHTvKSCZIFImWwoG6mbUoWf9nzpIoaSjB+weqqUUmpaaasXVal72J+UX2B+2RPW3RcT0eOzQgqlJL3RKrTJvdsjE3JEAvGq3lGHSZXy28G3skua2SmVi/w4yCE6gbODqnTWlg7+wC604ydGXA8VJiS5ap43JXiUFFAaQ==
+kind: ConfigMap
+metadata:
+  name: airflow-configmap
+---
+apiVersion: v1
+data:
+  gitSshKey: <real_ssh_key_in_base64>
+kind: Secret
+metadata:
+  name: airflow-secrets
+type: Opaque
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 8080
+  selector:
+    app: airflow
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: airflow
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: airflow
+    spec:
+      containers:
+        - env:
+            - name: GIT_SYNC_REPO
+              value: git@github.com:ealebed/airflow.git
+            - name: GIT_SYNC_BRANCH
+              value: master
+            - name: GIT_SYNC_ROOT
+              value: /git
+            - name: GIT_SYNC_DEST
+              value: repo
+            - name: GIT_SYNC_SSH
+              value: "true"
+          image: k8s.gcr.io/git-sync:v3.1.4
+          name: git-sync
+          securityContext:
+            runAsUser: 65533
+          volumeMounts:
+            - mountPath: /git
+              name: airflow-dags
+            - mountPath: /etc/git-secret/ssh
+              name: airflow-secrets
+              subPath: ssh
+            - mountPath: /etc/git-secret/known_hosts
+              name: airflow-configmap
+              subPath: known_hosts
+        - env:
+            - name: AIRFLOW__CORE__SQL_ALCHEMY_CONN
+              value: postgresql+psycopg2://airflow:airflow@postgreshost:5432/airflow
+            - name: AIRFLOW_CONN_POSTGRES_DEFAULT
+              value: postgres://airflow:airflow@postgreshost:5432/airflow
+            - name: AIRFLOW_SLACK_WEBHOOK_URL
+              value: T02H6C..........q3QPW0m
+            - name: AIRFLOW_ADMIN_USER
+              value: airflow
+            - name: AIRFLOW_ADMIN_PASSWORD
+              value: airflow
+            - name: AIRFLOW__CORE__FERNET_KEY
+              value: tsJjtESQbN_24ADlMX2HISyIVwfj7pW1nEfYDkcPYMY=
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: LocalExecutor
+          image: index.docker.io/ealebed/airflow:1.10.7
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            timeoutSeconds: 5
+          name: airflow
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 5
+            timeoutSeconds: 5
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4Gi
+            requests:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - mountPath: /usr/local/airflow/airflow.cfg
+              name: airflow-configmap
+              subPath: airflow.cfg
+            - mountPath: /usr/local/airflow/dags
+              name: airflow-dags
+      securityContext:
+        fsGroup: 1000
+      volumes:
+        - emptyDir: {}
+          name: airflow-dags
+        - configMap:
+            name: airflow-configmap
+          name: airflow-configmap
+        - name: airflow-secrets
+          secret:
+            defaultMode: 288
+            items:
+              - key: gitSshKey
+                mode: 288
+                path: ssh
+            secretName: airflow-secrets

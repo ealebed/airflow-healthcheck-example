@@ -1,0 +1,33 @@
+application.conf
+checkstyle*.jar
+
+### Gradle ###
+.gradle
+build
+!gradle/wrapper/gradle-wrapper.jar
+.gradle-docker
+build-docker
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+/out/
+
+### NetBeans ###
+/nbproject/private/
+/build/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
