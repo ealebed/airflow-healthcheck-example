@@ -1,4 +1,4 @@
-FROM python:3.7-slim-stretch
+FROM python:3.9-slim-buster
 
 LABEL maintainer="Yevhen Lebid <yevhen.lebid@loopme.com>"
 
@@ -7,26 +7,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TERM=linux
 
 # Airflow
-ARG AIRFLOW_VERSION=1.10.7
+ARG AIRFLOW_VERSION=2.1.2
 ARG AIRFLOW_USER_HOME=/usr/local/airflow
 ENV AIRFLOW_HOME=${AIRFLOW_USER_HOME}
 
-# Define en_US.
-ENV LANGUAGE=en_US.UTF-8 \
-    LANG=en_US.UTF-8 \
-    LC_ALL=en_US.UTF-8 \
-    LC_CTYPE=en_US.UTF-8 \
-    LC_MESSAGES=en_US.UTF-8
-
 RUN set -ex \
     && buildDeps=" \
-        freetds-dev \
-        libkrb5-dev \
         libsasl2-dev \
         libssl-dev \
         libffi-dev \
         libpq-dev \
-        git \
+        build-essential \
     " \
     && pipDeps=" \
        pytz \
@@ -34,25 +25,15 @@ RUN set -ex \
        ndg-httpsclient \
        pyasn1 \
        psycopg2-binary \
-       apache-airflow[crypto,postgres,jdbc,kubernetes,password,elasticsearch,slack]==${AIRFLOW_VERSION} \
+       SQLAlchemy \
     " \
     && apt-get update -yqq \
     && apt-get upgrade -yqq \
-    && apt-get install -yqq --no-install-recommends \
-        $buildDeps \
-        freetds-bin \
-        build-essential \
-        apt-utils \
-        curl \
-        rsync \
-        netcat \
-        locales \
-    && sed -i 's/^# en_US.UTF-8 UTF-8$/en_US.UTF-8 UTF-8/g' /etc/locale.gen \
-    && locale-gen \
-    && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
-    && useradd -ms /bin/bash -d ${AIRFLOW_USER_HOME} airflow \
+    && apt-get install -yqq --no-install-recommends git curl jq $buildDeps \
+    && useradd -ms /bin/bash -d ${AIRFLOW_USER_HOME} -u 65533 airflow \
     && pip install -U pip setuptools wheel \
     && pip install $pipDeps \
+    && pip install apache-airflow[async,http,postgres,cncf.kubernetes,password,slack]==${AIRFLOW_VERSION} airflow-code-editor \
     && apt-get purge --auto-remove -yqq $buildDeps \
     && apt-get autoremove -yqq --purge \
     && apt-get clean \
@@ -65,9 +46,10 @@ RUN set -ex \
         /usr/share/doc-base
 
 COPY entrypoint.sh /entrypoint.sh
+COPY airflow-healthcheck.sh /airflow-healthcheck.sh
 COPY airflow.cfg ${AIRFLOW_USER_HOME}/airflow.cfg
 
-RUN chown -R airflow: ${AIRFLOW_USER_HOME}
+RUN chown -R airflow:airflow ${AIRFLOW_USER_HOME}
 
 EXPOSE 8080
 

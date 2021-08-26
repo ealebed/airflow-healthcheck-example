@@ -1,0 +1,183 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: airflow-role-admin
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - pods/log
+    verbs:
+      - get
+      - watch
+      - list
+      - create
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: airflow-role-admin
+subjects:
+  - kind: ServiceAccount
+    name: default
+---
+apiVersion: v1
+data:
+  airflow.cfg: |
+    [core]
+    dags_folder = /usr/local/airflow/dags
+    executor = LocalExecutor
+    hide_sensitive_variable_fields = True
+    # sql_alchemy_conn = AIRFLOW__CORE__SQL_ALCHEMY_CONN from manifest
+    sql_alchemy_conn =
+    load_examples = False
+    load_default_connections = False
+    # fernet_key = AIRFLOW__CORE__FERNET_KEY
+    fernet_key =
+
+    [logging]
+    base_log_folder = /usr/local/airflow/logs
+    logging_level = INFO
+    fab_logging_level = ERROR
+    worker_logging_level = WARN
+
+    log_format = %%(asctime)s [%%(filename)s:%%(lineno)d] %%(levelname)s - %%(message)s
+    simple_log_format = %%(asctime)s %%(levelname)s - %%(message)s
+
+    [cli]
+    api_client = airflow.api.client.local_client
+    endpoint_url = http://my-airflow.example.cool
+
+    [api]
+    auth_backend = airflow.api.auth.backend.basic_auth
+
+    [webserver]
+    base_url = http://my-airflow.example.cool
+    web_server_host = 0.0.0.0
+    web_server_port = 8080
+    authenticate = True
+    auth_backend = airflow.contrib.auth.backends.password_auth
+    rbac = True
+    expose_config = True
+
+    [scheduler]
+    min_file_process_interval = 5
+    scheduler_health_check_threshold = 300
+
+    [code_editor]
+    git_default_args = -c color.ui=true
+    git_init_repo = False
+kind: ConfigMap
+metadata:
+  name: airflow-configmap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 8080
+  selector:
+    app: airflow
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: airflow
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: airflow
+    spec:
+      containers:
+        - env:
+          - name: GIT_SYNC_REPO
+            value: https://my:personal_token@github.com/ealebed/airflow/
+          - name: GIT_SYNC_BRANCH
+            value: master
+          - name: GIT_SYNC_ROOT
+            value: /git
+          - name: GIT_SYNC_DEST
+            value: repo
+          image: k8s.gcr.io/git-sync:v3.3.4
+          name: git-sync
+          securityContext:
+            runAsUser: 65533
+          volumeMounts:
+            - mountPath: /git
+              name: airflow-dags
+        - env:
+          - name: AIRFLOW__CORE__SQL_ALCHEMY_CONN
+            value: postgresql+psycopg2://airflow:airflow@postgreshost:5432/airflow
+          - name: AIRFLOW_CONN_POSTGRES_DEFAULT
+            value: postgres://airflow:airflow@postgreshost:5432/airflow
+          - name: AIRFLOW_SLACK_WEBHOOK_URL
+            value: T02H6C..........q3QPW0m
+          - name: AIRFLOW_ADMIN_USER
+            value: airflow
+          - name: AIRFLOW_ADMIN_PASSWORD
+            value: airflow
+          - name: AIRFLOW__CORE__FERNET_KEY
+            value: tsJjtESQbN_24ADldX2HISyIVwfj7pW1nEfYDkcPYMY=
+          - name: AIRFLOW__CORE__EXECUTOR
+            value: LocalExecutor
+          image: index.docker.io/ealebed/airflow:2.1.2
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - /airflow-healthcheck.sh
+            failureThreshold: 5
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          name: airflow
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 5
+            timeoutSeconds: 5
+          resources:
+            limits:
+              cpu: "2"
+              memory: 6Gi
+            requests:
+              cpu: "2"
+              memory: 6Gi
+          volumeMounts:
+            - mountPath: /usr/local/airflow/airflow.cfg
+              name: airflow-configmap
+              subPath: airflow.cfg
+            - mountPath: /usr/local/airflow/dags
+              name: airflow-dags
+      securityContext:
+        fsGroup: 1000
+      volumes:
+        - emptyDir: {}
+          name: airflow-dags
+        - configMap:
+            name: airflow-configmap
+          name: airflow-configmap
