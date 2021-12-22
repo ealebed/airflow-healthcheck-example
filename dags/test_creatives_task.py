@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from airflow.models import DAG
 from airflow.contrib.operators.kubernetes_pod_operator import KubernetesPodOperator
 
-from repo.dags.notifications import task_fail_slack_alert, task_success_slack_alert
+# from repo.dags.notifications import task_fail_slack_alert, task_success_slack_alert
 from repo.dags.kubernetes_commons import my_affinity, my_tolerations, my_resources
 
 default_args = {
@@ -11,8 +11,8 @@ default_args = {
     'depends_on_past': False,
     'start_date': datetime.strptime('2020.01.28', '%Y.%m.%d'),
     'retry_delay': timedelta(minutes=5),
-    'on_failure_callback': partial(task_fail_slack_alert, usr="ealebed"),
-    'on_success_callback': partial(task_success_slack_alert, usr="ealebed"),
+#     'on_failure_callback': partial(task_fail_slack_alert, usr="ealebed"),
+#     'on_success_callback': partial(task_success_slack_alert, usr="ealebed"),
 }
 
 dag = DAG(
